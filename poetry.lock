@@ -394,6 +394,22 @@ Flask = ">=1.0.4"
 Werkzeug = ">=1.0.1"
 
 [[package]]
+name = "flask-sqlalchemy"
+version = "3.1.1"
+description = "Add SQLAlchemy support to your Flask application."
+optional = false
+python-versions = ">=3.8"
+groups = ["main"]
+files = [
+    {file = "flask_sqlalchemy-3.1.1-py3-none-any.whl", hash = "sha256:4ba4be7f419dc72f4efd8802d69974803c37259dd42f3913b0dcf75c9447e0a0"},
+    {file = "flask_sqlalchemy-3.1.1.tar.gz", hash = "sha256:e4b68bb881802dda1a7d878b2fc84c06d1ee57fb40b874d3dc97dabfa36b8312"},
+]
+
+[package.dependencies]
+flask = ">=2.2.5"
+sqlalchemy = ">=2.0.16"
+
+[[package]]
 name = "google-ai-generativelanguage"
 version = "0.6.15"
 description = "Google Ai Generativelanguage API client library"
@@ -1417,4 +1433,4 @@ watchdog = ["watchdog (>=2.3)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<4.0"
-content-hash = "a4f122942ef0b10e6b887e7111425c043ab4b681a80b475a92f468e45d689480"
+content-hash = "27de2e9c124998b26b3dbe6651f45df4a41a01fd2deb5e23d22c59c6445a0dec"
