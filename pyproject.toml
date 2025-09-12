@@ -1,0 +1,31 @@
+[project]
+name = "micro-automator"
+version = "0.1.0"
+description = "A solution for The Guild Buildathon (PS2) focusing on micro-entrepreneur efficiency and automation."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "DipayanDasgupta", email = "deep.dasgupta2006@gmail.com" }]
+
+dependencies = [
+    "flask",
+    "gunicorn",
+    "anvil-uplink",
+    "python-dotenv",
+    "requests"
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "uv",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"] # Standard linting rules
+
+[tool.ruff.format]
+quote-style = "double"

@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: micro-automator-backend
+    env: python
+    plan: free
+    buildCommand: "uv pip install -r requirements.txt"
+    startCommand: "gunicorn 'micro_automator.app:app'"
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11
+      - key: FLASK_APP
+        value: "micro_automator.app:app"
+      - key: FLASK_ENV
+        value: production
+      - key: ANVIL_UPLINK_KEY
+        sync: false # Set this in the Render dashboard
