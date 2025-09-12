@@ -1,31 +1,22 @@
-[project]
-name = "micro-automator"
+[tool.poetry]
+name = "guild-buildathon"
 version = "0.1.0"
-description = "A solution for The Guild Buildathon (PS2) focusing on micro-entrepreneur efficiency and automation."
+description = "Backend for the Guild Buildathon"
+authors = ["DipayanDasgupta <deep.dasgupta2006@gmail.com>"]
 readme = "README.md"
-requires-python = ">=3.10"
-license = { text = "MIT" }
-authors = [{ name = "DipayanDasgupta", email = "deep.dasgupta2006@gmail.com" }]
 
-dependencies = [
-    "flask",
-    "gunicorn",
-    "anvil-uplink",
-    "python-dotenv",
-    "requests"
-]
+[tool.poetry.dependencies]
+# This line fixes the Python version conflict
+python = ">=3.12,<4.0"
 
-[project.optional-dependencies]
-dev = [
-    "ruff",
-    "uv",
-]
+# All of your required packages are now listed here
+flask = "^3.0.0"
+gunicorn = "^22.0.0"
+python-dotenv = "^1.0.1"
+requests = "^2.31.0"
+flask-cors = "^4.0.0"
 
-[tool.ruff]
-line-length = 120
 
-[tool.ruff.lint]
-select = ["E", "F", "W", "I"] # Standard linting rules
-
-[tool.ruff.format]
-quote-style = "double"
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
