@@ -3,6 +3,9 @@ services:
     name: micro-automator-backend
     env: python
     plan: free
+    build:
+      aptPackages:
+        - tesseract-ocr
     buildCommand: "uv pip install -r requirements.txt"
     startCommand: "gunicorn 'micro_automator.app:app'"
     healthCheckPath: /
