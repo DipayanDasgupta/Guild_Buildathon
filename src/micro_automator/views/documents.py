@@ -12,20 +12,24 @@ from ..extensions import db
 from ..models.document import Document
 from ..models.client import Client
 
+# --- Setup Logging ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# --- Configure API ---
 try:
     api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key: raise ValueError("GOOGLE_API_KEY not set.")
+    if not api_key:
+        raise ValueError("GOOGLE_API_KEY environment variable not set.")
     genai.configure(api_key=api_key)
 except Exception as e:
     logger.error(f"Failed to configure Gemini API: {e}")
 
+# --- Blueprint ---
 documents_bp = Blueprint('documents', __name__)
 
+# --- Helper Functions for Text Extraction ---
 def extract_text_from_pdf(pdf_stream):
-    """Extracts text from a PDF file stream."""
     text = ""
     with fitz.open(stream=pdf_stream, filetype="pdf") as doc:
         for page in doc:
@@ -34,25 +38,19 @@ def extract_text_from_pdf(pdf_stream):
     return text
 
 def extract_text_from_image(image_stream):
-    """Extracts text from an image file stream using OCR."""
     image = Image.open(image_stream)
     text = pytesseract.image_to_string(image)
     logger.info(f"Extracted {len(text)} characters from Image using OCR.")
     return text
 
+# --- API Endpoints ---
 @documents_bp.route('/', methods=['GET'])
 def get_all_documents():
-    """Fetches all processed documents from the database."""
-    try:
-        documents = Document.query.order_by(Document.upload_date.desc()).all()
-        return jsonify([doc.to_dict() for doc in documents])
-    except Exception as e:
-        logger.error(f"Error fetching documents: {e}", exc_info=True)
-        return jsonify({"status": "error", "message": "Could not retrieve documents."}), 500
+    documents = Document.query.order_by(Document.upload_date.desc()).all()
+    return jsonify([doc.to_dict() for doc in documents])
 
 @documents_bp.route('/<int:doc_id>', methods=['DELETE'])
 def delete_document(doc_id):
-    """Deletes a document from the database."""
     document = Document.query.get_or_404(doc_id)
     db.session.delete(document)
     db.session.commit()
@@ -60,74 +58,60 @@ def delete_document(doc_id):
 
 @documents_bp.route('/process', methods=['POST'])
 def process_document():
-    if 'document' not in request.files: return jsonify({"status": "error", "message": "No document file part"}), 400
+    if 'document' not in request.files:
+        return jsonify({"status": "error", "message": "No document file part"}), 400
+
     file = request.files['document']
     file.seek(0)
     file_stream = io.BytesIO(file.read())
 
     try:
-        # --- Stage 1: Text Extraction ---
+        # Stage 1: Text Extraction
         extracted_text = ""
-        if file.content_type == 'application/pdf': extracted_text = extract_text_from_pdf(file_stream)
-        elif file.content_type.startswith('image/'): extracted_text = extract_text_from_image(file_stream)
-        else: return jsonify({"status": "error", "message": "Unsupported file type"}), 415
-        if not extracted_text.strip(): return jsonify({"status": "error", "message": "Could not extract text."}), 400
-
-        # --- Stage 2: THE ULTIMATE GEMINI PROMPT ---
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        prompt = f"""
-        Act as an AI assistant for an insurance agent. Analyze the text from the uploaded document and perform a comprehensive analysis.
+        if file.content_type == 'application/pdf':
+            extracted_text = extract_text_from_pdf(file_stream)
+        elif file.content_type.startswith('image/'):
+            extracted_text = extract_text_from_image(file_stream)
+        else:
+            return jsonify({"status": "error", "message": "Unsupported file type"}), 415
         
-        TASKS:
-        1.  **Detailed Extraction:** Extract every possible piece of information that could be relevant. This includes, but is not limited to: Customer Full Name, Policy Number, Policy Type, Premium Amount, Start Date, End Date, Address, Vehicle Details (if any), Claim Details (if any).
-        2.  **Analysis:** Based on the entire document, provide a concise analysis by determining the following:
-            -   `summary`: A single, informative sentence describing the document's main purpose.
-            -   `category`: Classify the document into ONE of the following: "New Policy Document", "Policy Renewal Notice", "Claim Submission", "Customer Inquiry", "Marketing Material", or "Other".
-            -   `sentiment`: Classify the sentiment as "Positive", "Neutral", "Negative", or "Urgent".
-            -   `urgency_score`: An integer from 1 (Not Urgent) to 10 (Extremely Urgent).
-            -   `suggested_actions`: A JSON array of 2-3 short, clear, actionable next steps for the agent.
+        if not extracted_text.strip():
+            return jsonify({"status": "error", "message": "Could not extract text."}), 400
 
+        # Stage 2: Advanced Gemini Analysis
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        prompt = f"""
+        Act as an AI assistant for an insurance agent. Analyze the text from this document and perform a comprehensive analysis.
+        TASKS:
+        1.  **Detailed Extraction:** Extract every possible piece of information that could be relevant, including: Customer Full Name, Policy Number, Policy Type, Premium Amount, Start Date, End Date, Address.
+        2.  **Analysis:** Provide a concise analysis by determining the following: `summary`, `category` ("New Policy Document", "Policy Renewal Notice", "Claim Submission", "Customer Inquiry", or "Other"), `sentiment` ("Positive", "Neutral", "Negative", or "Urgent"), `urgency_score` (integer from 1 to 10), and a JSON array of 2-3 `suggested_actions`.
         OUTPUT FORMATTING:
         -   Return the result ONLY as a single, valid JSON object.
-        -   Do not include any explanatory text, greetings, or markdown formatting like ```json.
-        -   For any field in the 'extraction' block that is not found in the document, you MUST use the JSON value `null`. Do not make up information.
-
+        -   For any field in the 'extraction' block that is not found, you MUST use the JSON value `null`.
         EXAMPLE JSON STRUCTURE:
-        {{
-          "extraction": {{
-            "customer_name": "John Doe",
-            "policy_number": "XYZ-12345",
-            "policy_type": "Comprehensive Auto Insurance",
-            "premium_amount": 1250.75,
-            "policy_start_date": "2024-01-15",
-            "policy_end_date": "2025-01-15",
-            "customer_address": "123 Main St, Anytown, USA",
-            "vehicle_details": null
-          }},
-          "analysis": {{
-            "summary": "This is a renewal notice for John Doe's comprehensive auto insurance policy.",
-            "category": "Policy Renewal Notice",
-            "sentiment": "Urgent",
-            "urgency_score": 9,
-            "suggested_actions": [
-              "Contact John Doe to confirm renewal before the expiry date.",
-              "Prepare the payment link for the premium amount.",
-              "Check for any available discounts for loyal customers."
-            ]
-          }}
-        }}
-
-        DOCUMENT TEXT TO ANALYZE:
-        ---
-        {extracted_text[:15000]}
-        ---
+        {{"extraction": {{"customer_name": "John Doe", "policy_number": "XYZ-12345"}}, "analysis": {{"summary": "...", "category": "Policy Renewal Notice", "sentiment": "Urgent", "urgency_score": 9, "suggested_actions": ["Action 1"]}}}}
+        DOCUMENT TEXT TO ANALYZE: --- {extracted_text[:15000]} ---
         """
         
         response = model.generate_content(prompt)
-        ai_data = json.loads(response.text)
-        logger.info("Successfully received advanced analysis from Gemini.")
+        
+        # Robust JSON Parsing Fix
+        cleaned_text = response.text.strip()
+        try:
+            ai_data = json.loads(cleaned_text)
+        except json.JSONDecodeError:
+            logger.warning("Initial JSON parsing failed, searching for markdown block.")
+            start_index = cleaned_text.find('{')
+            end_index = cleaned_text.rfind('}') + 1
+            if start_index != -1 and end_index != -1:
+                json_str = cleaned_text[start_index:end_index]
+                ai_data = json.loads(json_str)
+            else:
+                raise ValueError("No valid JSON object found in Gemini's response.")
+        
+        logger.info("Successfully received and parsed advanced analysis from Gemini.")
 
-        # --- Stage 3: Save to Database and Create/Update Client ---
+        # Stage 3: Save to Database
         new_document = Document(
             filename=file.filename,
             extracted_data=ai_data.get("extraction"),

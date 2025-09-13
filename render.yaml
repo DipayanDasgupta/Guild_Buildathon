@@ -3,11 +3,11 @@ services:
     name: guild-buildathon-backend
     env: python
     plan: free
-    buildCommand: "poetry install --no-root && flask db upgrade" # <-- THIS IS THE KEY CHANGE
+    buildCommand: "poetry install --no-root && poetry run flask db upgrade"
     startCommand: "poetry run gunicorn --timeout 120 \"src.micro_automator.app:app\""
     healthCheckPath: /
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11
+        value: "3.12.3"
       - key: FLASK_APP
         value: "src.micro_automator.app:app"
