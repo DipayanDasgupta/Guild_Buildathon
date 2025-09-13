@@ -15,6 +15,7 @@ from . import models # This import is now safe
 def create_app(config_class=Config):
     """The application factory."""
     app = Flask(__name__)
+    app.url_map.strict_slashes = False
     app.config.from_object(config_class)
     
     # Configure the database URI

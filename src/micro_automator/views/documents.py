@@ -142,3 +142,14 @@ def process_document():
         db.session.rollback()
         logger.error(f"An error occurred: {e}", exc_info=True)
         return jsonify({"status": "error", "message": "An unexpected server error occurred."}), 500
+
+@documents_bp.route('/<int:doc_id>', methods=['DELETE'])
+def delete_document(doc_id):
+    """Deletes a document from the database."""
+    document = Document.query.get(doc_id)
+    if document is None:
+        return jsonify({"status": "error", "message": "Document not found"}), 404
+    
+    db.session.delete(document)
+    db.session.commit()
+    return jsonify({"status": "success", "message": "Document deleted successfully"}), 200
