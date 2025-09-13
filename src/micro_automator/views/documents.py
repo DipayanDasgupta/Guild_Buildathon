@@ -74,8 +74,8 @@ def process_document():
             return jsonify({"status": "error", "message": "Could not extract any text from the document."}), 400
 
         # --- Explicitly use the 'gemini-2.5-flash' model ---
-        logger.info("Initializing Gemini model: gemini-2.5-flash")
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        logger.info("Initializing Gemini model: gemini-2.5-pro")
+        model = genai.GenerativeModel('gemini-2.5-pro')
 
         # Define retry policy for 429 errors
         retry_policy = Retry(
