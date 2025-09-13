@@ -79,7 +79,7 @@ def process_document():
             return jsonify({"status": "error", "message": "Could not extract text."}), 400
 
         # Stage 2: Advanced Gemini Analysis
-        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         prompt = f"""
         Act as an AI assistant for an insurance agent. Analyze the text from this document and perform a comprehensive analysis.
         TASKS:
