@@ -150,8 +150,30 @@ def process_document():
         """
         
         response = model.generate_content(prompt)
-        ai_data = json.loads(response.text)  # Simplified parsing for now
         
+        # --- THIS IS THE DEFINITIVE FIX for the JSONDecodeError ---
+        cleaned_text = response.text.strip()
+        ai_data = None
+        try:
+            # First, try to load the text directly.
+            ai_data = json.loads(cleaned_text)
+        except json.JSONDecodeError:
+            logger.warning("Initial JSON parsing failed. Searching for a markdown JSON block.")
+            # If it fails, it's likely wrapped in ```json ... ```. We'll find it.
+            start_index = cleaned_text.find('{')
+            end_index = cleaned_text.rfind('}') + 1
+            if start_index != -1 and end_index != -1:
+                json_str = cleaned_text[start_index:end_index]
+                try:
+                    ai_data = json.loads(json_str)
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse extracted JSON block: {json_str}. Error: {e}")
+                    raise ValueError("Could not find or parse a valid JSON object in the AI response.")
+            else:
+                raise ValueError(f"No JSON object found in the AI response: {cleaned_text}")
+        
+        logger.info("Successfully received and parsed advanced analysis from Gemini.")
+
         # --- Stage 3: Save to Database ---
         extraction_data = ai_data.get("extraction", {})
         analysis_data = ai_data.get("analysis", {})
@@ -185,5 +207,5 @@ def process_document():
 
     except Exception as e:
         db.session.rollback()
-        logger.error(f"An error occurred: {e}", exc_info=True)
+        logger.error(f"An error occurred during document processing: {e}", exc_info=True)
         return jsonify({"status": "error", "message": "An unexpected server error occurred."}), 500
