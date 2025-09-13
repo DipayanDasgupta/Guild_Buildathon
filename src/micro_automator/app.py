@@ -1,45 +1,46 @@
 import os
-from flask import Flask, jsonify
+from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
 from sqlalchemy import text
 from flask_migrate import Migrate
 
 from .extensions import db
 from .config import Config
-# Correctly import all your blueprints
 from .views.documents import documents_bp
 from .views.automation import automation_bp
 from .views.clients import clients_bp
 from .views.dashboard import dashboard_bp
 from . import models
 
-# Initialize extensions in the global scope
 migrate = Migrate()
 
 def create_app(config_class=Config):
-    """The application factory."""
     app = Flask(__name__)
     app.url_map.strict_slashes = False
     app.config.from_object(config_class)
     
-    # Configure the database URI correctly
+    # Configure folder for storing extracted photos
+    app.config['UPLOAD_FOLDER'] = 'uploads'
+    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+    
     db_url = os.environ.get('DATABASE_URL')
     if db_url and db_url.startswith("postgres://"):
         db_url = db_url.replace("postgres://", "postgresql://", 1)
     app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 
-    # Initialize extensions with the app instance
     db.init_app(app)
-    migrate.init_app(app, db) # Initialize Flask-Migrate
+    migrate.init_app(app, db)
     CORS(app)
 
-    # --- THIS IS THE KEY FIX ---
-    # Register all API Blueprints with the app
     app.register_blueprint(documents_bp, url_prefix='/api/documents')
     app.register_blueprint(automation_bp, url_prefix='/api/automation')
     app.register_blueprint(clients_bp, url_prefix='/api/clients')
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
 
+    # Add a route to serve the uploaded/extracted photos
+    @app.route('/uploads/<path:filename>')
+    def serve_upload(filename):
+        return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
     # --- Health Check Routes ---
     @app.route('/')
     def api_root_health():
