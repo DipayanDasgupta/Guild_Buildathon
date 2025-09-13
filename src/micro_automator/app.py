@@ -1,7 +1,13 @@
+# This must be the very first thing to run
+from dotenv import load_dotenv
+load_dotenv()
+
 import os
 from flask import Flask, jsonify
 from flask_cors import CORS
 from sqlalchemy import text
+from flask_migrate import Migrate
+
 from .extensions import db
 from .config import Config
 from .views.documents import documents_bp
@@ -10,7 +16,10 @@ from .views.clients import clients_bp
 from .views.dashboard import dashboard_bp
 from . import models
 
+migrate = Migrate()
+
 def create_app(config_class=Config):
+    """The application factory."""
     app = Flask(__name__)
     app.url_map.strict_slashes = False
     app.config.from_object(config_class)
@@ -21,25 +30,10 @@ def create_app(config_class=Config):
     app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 
     db.init_app(app)
+    migrate.init_app(app, db)
     CORS(app)
 
-    app.register_blueprint(documents_bp, url_prefix='/api/documents')
-    app.register_blueprint(automation_bp, url_prefix='/api/automation')
-    app.register_blueprint(clients_bp, url_prefix='/api/clients')
-    app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
-
-    @app.route('/')
-    def api_root_health():
-        return jsonify({"status": "healthy", "message": "Micro-Automator API is running!"})
-
-    @app.route('/api/db-health-check')
-    def database_health_check():
-        try:
-            with app.app_context():
-                db.session.execute(text('SELECT 1'))
-            return jsonify({"status": "ok", "database": "connected"}), 200
-        except Exception as e:
-            return jsonify({"status": "error", "database": "disconnected", "details": str(e)}), 500
+    # ... (the rest of your app routes remain the same) ...
 
     with app.app_context():
         db.create_all()

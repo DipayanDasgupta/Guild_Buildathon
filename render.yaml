@@ -1,20 +1,13 @@
 services:
   - type: web
-    name: micro-automator-backend
+    name: guild-buildathon-backend
     env: python
     plan: free
-    build:
-      aptPackages:
-        - tesseract-ocr
-    buildCommand: "uv pip install -r requirements.txt"
-    startCommand: "gunicorn 'micro_automator.app:app'"
+    buildCommand: "poetry install --no-root && flask db upgrade" # <-- THIS IS THE KEY CHANGE
+    startCommand: "poetry run gunicorn --timeout 120 \"src.micro_automator.app:app\""
     healthCheckPath: /
     envVars:
       - key: PYTHON_VERSION
         value: 3.11
       - key: FLASK_APP
-        value: "micro_automator.app:app"
-      - key: FLASK_ENV
-        value: production
-      - key: ANVIL_UPLINK_KEY
-        sync: false # Set this in the Render dashboard
+        value: "src.micro_automator.app:app"
