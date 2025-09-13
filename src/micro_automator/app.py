@@ -11,6 +11,7 @@ from .views.documents import documents_bp
 from .views.automation import automation_bp
 from .views.dashboard import dashboard_bp
 from .views.clients import clients_bp
+from .models import document
 
 # 1. Initialize extensions in the global scope
 # This prevents circular imports and makes the 'db' object available to other files (like models)
@@ -56,6 +57,8 @@ def create_app(config_class=Config):
             # Return a server error if the connection fails
             return jsonify({"status": "error", "database": "disconnected", "details": str(e)}), 500
 
+    with app.app_context():
+        db.create_all()
     return app
 
 # This instance is used by Gunicorn in production

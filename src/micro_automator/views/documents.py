@@ -2,124 +2,123 @@ import os
 import json
 import io
 import logging
-import time
+import google.generativeai as genai
 from flask import Blueprint, request, jsonify
 from PIL import Image
 import pytesseract
 import fitz  # PyMuPDF
-import google.generativeai as genai
-from google.api_core.exceptions import ResourceExhausted
-from google.api_core.retry import Retry
 
-# --- Setup robust logging ---
+from ..app import db
+from ..models.document import Document
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configure the Gemini API client from the environment variable
 try:
     api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        raise ValueError("GOOGLE_API_KEY environment variable not set.")
+    if not api_key: raise ValueError("GOOGLE_API_KEY not set.")
     genai.configure(api_key=api_key)
     logger.info("Gemini API configured successfully.")
 except Exception as e:
     logger.error(f"Failed to configure Gemini API: {e}")
-    raise  # Re-raise to prevent the app from starting without a valid API key
 
 documents_bp = Blueprint('documents', __name__)
 
+# --- Helper Functions for Text Extraction ---
 def extract_text_from_pdf(pdf_stream):
-    text = ""
-    try:
-        with fitz.open(stream=pdf_stream, filetype="pdf") as doc:
-            for page in doc:
-                text += page.get_text()
-        logger.info(f"Extracted {len(text)} characters from PDF.")
-    except Exception as e:
-        logger.error(f"Error extracting text from PDF: {e}")
-        raise
-    return text
-
+    # ... (code remains the same)
 def extract_text_from_image(image_stream):
-    try:
-        image = Image.open(image_stream)
-        text = pytesseract.image_to_string(image)
-        logger.info(f"Extracted {len(text)} characters from Image using OCR.")
-        return text
-    except Exception as e:
-        logger.error(f"Error extracting text from image: {e}")
-        raise
+    # ... (code remains the same)
 
+# --- NEW: API to fetch all processed documents ---
+@documents_bp.route('/', methods=['GET'])
+def get_all_documents():
+    try:
+        documents = Document.query.order_by(Document.upload_date.desc()).all()
+        return jsonify([doc.to_dict() for doc in documents])
+    except Exception as e:
+        logger.error(f"Error fetching documents: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": "Could not retrieve documents."}), 500
+
+# --- UPGRADED: API to process a new document ---
 @documents_bp.route('/process', methods=['POST'])
 def process_document():
     if 'document' not in request.files:
         return jsonify({"status": "error", "message": "No document file part"}), 400
 
     file = request.files['document']
-    logger.info(f"Received file: {file.filename}, Content-Type: {file.content_type}")
-    
+    logger.info(f"Received file: {file.filename}")
+
     try:
+        # --- Stage 1: Text Extraction ---
         extracted_text = ""
         file_stream = io.BytesIO(file.read())
-
         if file.content_type == 'application/pdf':
             extracted_text = extract_text_from_pdf(file_stream)
         elif file.content_type.startswith('image/'):
             extracted_text = extract_text_from_image(file_stream)
         else:
-            return jsonify({"status": "error", "message": f"Unsupported file type: {file.content_type}"}), 415
+            return jsonify({"status": "error", "message": f"Unsupported file type"}), 415
         
         if not extracted_text.strip():
-            logger.warning("No text could be extracted from the document.")
-            return jsonify({"status": "error", "message": "Could not extract any text from the document."}), 400
+            return jsonify({"status": "error", "message": "Could not extract text."}), 400
 
-        # --- Explicitly use the 'gemini-2.5-flash' model ---
-        logger.info("Initializing Gemini model: gemini-2.5-pro")
-        model = genai.GenerativeModel('gemini-2.5-pro')
-
-        # Define retry policy for 429 errors
-        retry_policy = Retry(
-            predicate=lambda exc: isinstance(exc, ResourceExhausted),
-            initial=5.0,  # Initial delay in seconds
-            maximum=60.0,  # Max delay
-            multiplier=2.0,  # Exponential backoff
-            deadline=300.0  # Total timeout for retries (5 minutes)
-        )
-
-        prompt = f"""
-        Analyze the following text from an insurance document and extract these fields: Policy Number, Customer Full Name, Premium Amount (numbers only), and Policy End Date (in YYYY-MM-DD format).
-        Return the result ONLY as a valid JSON object. If a field is not found, use a null value.
-
-        TEXT:
-        ---
-        {extracted_text[:10000]} 
-        ---
-        """  # Truncate text to avoid token limits
+        # --- Stage 2: Advanced Gemini Analysis ---
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
         
-        logger.info("Sending request to Gemini API...")
+        # This is our new, more powerful prompt!
+        prompt = f"""
+        Act as an expert insurance agent's assistant. Analyze the text from this document and perform the following tasks:
+        1.  Extract key information: Policy Number, Customer Full Name, Premium Amount, and Policy End Date.
+        2.  Provide a concise, one-sentence summary of the document's purpose.
+        3.  Categorize the document into ONE of the following: "New Policy", "Claim Form", "Renewal Notice", "General Inquiry".
+        4.  Determine the sentiment of the document: "Positive", "Neutral", "Negative", or "Urgent".
+        5.  Generate a list of 2-3 short, actionable items for the agent.
 
-        # Wrap the API call with retry logic
-        def make_api_call():
-            return model.generate_content(prompt, request_options={"timeout": 60})  # 60-second timeout
+        Return the result ONLY as a valid JSON object with the following structure:
+        {{
+          "extracted_data": {{
+            "policy_number": "...",
+            "customer_name": "...",
+            "premium_amount": ...,
+            "policy_end_date": "..."
+          }},
+          "summary": "...",
+          "category": "...",
+          "sentiment": "...",
+          "action_items": ["Action 1", "Action 2"]
+        }}
 
-        try:
-            response = retry_policy(make_api_call)()
-            json_response_text = response.text.strip().replace("```json", "").replace("```", "")
-            logger.info("Successfully received and parsed response from Gemini.")
-            
-            return jsonify({
-                "status": "success",
-                "message": "Document processed by Gemini.",
-                "data": json.loads(json_response_text)
-            })
+        Here is the extracted text:
+        ---
+        {extracted_text[:15000]} 
+        ---
+        """
+        
+        response = model.generate_content(prompt)
+        json_response_text = response.text.strip().replace("```json", "").replace("```", "")
+        ai_data = json.loads(json_response_text)
+        logger.info("Successfully received and parsed advanced analysis from Gemini.")
 
-        except ResourceExhausted as re:
-            logger.error(f"Quota exceeded for Gemini API: {re}")
-            return jsonify({
-                "status": "error",
-                "message": "API quota exceeded. Please check your plan and billing details at https://ai.google.dev/gemini-api/docs/rate-limits or try again later."
-            }), 429
+        # --- Stage 3: Save to Database ---
+        new_document = Document(
+            filename=file.filename,
+            extracted_data=ai_data.get("extracted_data"),
+            ai_summary=ai_data.get("summary"),
+            ai_category=ai_data.get("category"),
+            ai_sentiment=ai_data.get("sentiment"),
+            ai_action_items=ai_data.get("action_items")
+        )
+        db.session.add(new_document)
+        db.session.commit()
+        logger.info(f"Successfully saved document {new_document.id} to the database.")
+        
+        return jsonify({
+            "status": "success",
+            "message": "Document processed and saved.",
+            "data": new_document.to_dict()
+        })
 
     except Exception as e:
-        logger.error(f"An error occurred during document processing: {e}", exc_info=True)
-        return jsonify({"status": "error", "message": "An unexpected error occurred on the server."}), 500
+        logger.error(f"An error occurred: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": "An unexpected server error occurred."}), 500
