@@ -11,28 +11,46 @@ import fitz  # PyMuPDF
 from ..app import db
 from ..models.document import Document
 
+# --- Setup Logging ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# --- Configure API ---
 try:
     api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key: raise ValueError("GOOGLE_API_KEY not set.")
+    if not api_key:
+        raise ValueError("GOOGLE_API_KEY environment variable not set.")
     genai.configure(api_key=api_key)
     logger.info("Gemini API configured successfully.")
 except Exception as e:
     logger.error(f"Failed to configure Gemini API: {e}")
 
+# --- Blueprint ---
 documents_bp = Blueprint('documents', __name__)
 
 # --- Helper Functions for Text Extraction ---
-def extract_text_from_pdf(pdf_stream):
-    # ... (code remains the same)
-def extract_text_from_image(image_stream):
-    # ... (code remains the same)
 
-# --- NEW: API to fetch all processed documents ---
+def extract_text_from_pdf(pdf_stream):
+    """Extracts text from a PDF file stream."""
+    text = ""
+    with fitz.open(stream=pdf_stream, filetype="pdf") as doc:
+        for page in doc:
+            text += page.get_text()
+    logger.info(f"Extracted {len(text)} characters from PDF.")
+    return text
+
+def extract_text_from_image(image_stream):
+    """Extracts text from an image file stream using OCR."""
+    image = Image.open(image_stream)
+    text = pytesseract.image_to_string(image)
+    logger.info(f"Extracted {len(text)} characters from Image using OCR.")
+    return text
+
+# --- API Endpoints ---
+
 @documents_bp.route('/', methods=['GET'])
 def get_all_documents():
+    """Fetches all processed documents from the database."""
     try:
         documents = Document.query.order_by(Document.upload_date.desc()).all()
         return jsonify([doc.to_dict() for doc in documents])
@@ -40,9 +58,9 @@ def get_all_documents():
         logger.error(f"Error fetching documents: {e}", exc_info=True)
         return jsonify({"status": "error", "message": "Could not retrieve documents."}), 500
 
-# --- UPGRADED: API to process a new document ---
 @documents_bp.route('/process', methods=['POST'])
 def process_document():
+    """Handles file upload, AI analysis, and saving to the database."""
     if 'document' not in request.files:
         return jsonify({"status": "error", "message": "No document file part"}), 400
 
@@ -66,33 +84,21 @@ def process_document():
         # --- Stage 2: Advanced Gemini Analysis ---
         model = genai.GenerativeModel('gemini-1.5-flash-latest')
         
-        # This is our new, more powerful prompt!
         prompt = f"""
         Act as an expert insurance agent's assistant. Analyze the text from this document and perform the following tasks:
-        1.  Extract key information: Policy Number, Customer Full Name, Premium Amount, and Policy End Date.
-        2.  Provide a concise, one-sentence summary of the document's purpose.
-        3.  Categorize the document into ONE of the following: "New Policy", "Claim Form", "Renewal Notice", "General Inquiry".
-        4.  Determine the sentiment of the document: "Positive", "Neutral", "Negative", or "Urgent".
-        5.  Generate a list of 2-3 short, actionable items for the agent.
+        1. Extract key information: Policy Number, Customer Full Name, Premium Amount, and Policy End Date.
+        2. Provide a concise, one-sentence summary of the document's purpose.
+        3. Categorize the document into ONE of the following: "New Policy", "Claim Form", "Renewal Notice", "General Inquiry".
+        4. Determine the sentiment of the document: "Positive", "Neutral", "Negative", or "Urgent".
+        5. Generate a list of 2-3 short, actionable items for the agent.
 
         Return the result ONLY as a valid JSON object with the following structure:
         {{
-          "extracted_data": {{
-            "policy_number": "...",
-            "customer_name": "...",
-            "premium_amount": ...,
-            "policy_end_date": "..."
-          }},
-          "summary": "...",
-          "category": "...",
-          "sentiment": "...",
-          "action_items": ["Action 1", "Action 2"]
+          "extracted_data": {{"policy_number": "...", "customer_name": "...", "premium_amount": ..., "policy_end_date": "..."}},
+          "summary": "...", "category": "...", "sentiment": "...", "action_items": ["Action 1", "Action 2"]
         }}
 
-        Here is the extracted text:
-        ---
-        {extracted_text[:15000]} 
-        ---
+        TEXT: --- {extracted_text[:15000]} ---
         """
         
         response = model.generate_content(prompt)
@@ -113,11 +119,7 @@ def process_document():
         db.session.commit()
         logger.info(f"Successfully saved document {new_document.id} to the database.")
         
-        return jsonify({
-            "status": "success",
-            "message": "Document processed and saved.",
-            "data": new_document.to_dict()
-        })
+        return jsonify({ "status": "success", "message": "Document processed and saved.", "data": new_document.to_dict() })
 
     except Exception as e:
         logger.error(f"An error occurred: {e}", exc_info=True)
