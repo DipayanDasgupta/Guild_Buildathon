@@ -10,7 +10,7 @@ from .views.documents import documents_bp
 from .views.automation import automation_bp
 from .views.clients import clients_bp
 from .views.dashboard import dashboard_bp
-from .models import document # This import is now safe
+from . import models # This import is now safe
 
 def create_app(config_class=Config):
     """The application factory."""
