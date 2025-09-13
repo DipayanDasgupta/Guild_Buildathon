@@ -66,8 +66,8 @@ def process_document():
             return jsonify({"status": "error", "message": "Could not extract any text from the document."}), 400
 
         # --- Explicitly use the 'gemini-1.5-flash-latest' model ---
-        logger.info("Initializing Gemini model: gemini-2.5-pro")
-        model = genai.GenerativeModel('gemini-2.5-pro')
+        logger.info("Initializing Gemini model: gemini-2.5-flash")
+        model = genai.GenerativeModel('gemini-2.5-flash')
         
         prompt = f"""
         Analyze the following text from an insurance document and extract these fields: Policy Number, Customer Full Name, Premium Amount (numbers only), and Policy End Date (in YYYY-MM-DD format).
