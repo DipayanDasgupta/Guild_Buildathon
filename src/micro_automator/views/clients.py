@@ -10,8 +10,6 @@ def get_clients():
     """Fetches clients with optional filtering by status and searching by name."""
     try:
         query = Client.query
-        
-        # Get query parameters from the request URL
         status_filter = request.args.get('status')
         search_term = request.args.get('search')
 
@@ -19,7 +17,6 @@ def get_clients():
             query = query.filter(Client.status == status_filter)
         
         if search_term:
-            # Case-insensitive search across name and policy ID
             search_pattern = f"%{search_term}%"
             query = query.filter(or_(Client.name.ilike(search_pattern), Client.policy_id.ilike(search_pattern)))
 
@@ -30,14 +27,29 @@ def get_clients():
 
 @clients_bp.route('/', methods=['POST'])
 def add_client():
+    """Adds a new client to the database from a JSON payload."""
     data = request.get_json()
-    if not data or not data.get('name'): return jsonify({"message": "Client name is required"}), 400
+    if not data or not data.get('name'):
+        return jsonify({"message": "Client name is required"}), 400
+    
+    # Check if a client with this name already exists
+    if Client.query.filter_by(name=data['name']).first():
+        return jsonify({"message": "A client with this name already exists."}), 409
+
     new_client = Client(
-        name=data['name'], email=data.get('email'), phone=data.get('phone'),
-        policy_type=data.get('policyType'), status=data.get('status', 'Prospective')
+        name=data['name'],
+        email=data.get('email'),
+        phone=data.get('phone'),
+        status=data.get('status', 'Prospective')
     )
     db.session.add(new_client)
     db.session.commit()
     return jsonify(new_client.to_dict()), 201
 
-# Add other CRUD endpoints (PUT, DELETE) here if needed
+@clients_bp.route('/<int:client_id>', methods=['DELETE'])
+def delete_client(client_id):
+    """Deletes a client from the database."""
+    client = Client.query.get_or_404(client_id)
+    db.session.delete(client)
+    db.session.commit()
+    return jsonify({'message': 'Client deleted successfully'})
