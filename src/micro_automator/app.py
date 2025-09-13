@@ -10,6 +10,7 @@ from .config import Config
 from .views.documents import documents_bp
 from .views.automation import automation_bp
 from .views.dashboard import dashboard_bp
+from .views.clients import clients_bp
 
 # 1. Initialize extensions in the global scope
 # This prevents circular imports and makes the 'db' object available to other files (like models)
@@ -35,6 +36,7 @@ def create_app(config_class=Config):
     app.register_blueprint(documents_bp, url_prefix='/api/documents')
     app.register_blueprint(automation_bp, url_prefix='/api/automation')
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
+    app.register_blueprint(clients_bp, url_prefix='/api/clients')
 
     # --- Health Check Routes ---
 
