@@ -15,59 +15,73 @@ reconciliation_bp = Blueprint('reconciliation', __name__)
 
 def parse_pdf_statement(file_stream, source_name):
     """
-    Extracts tabular data from a PDF and converts it into a list of dictionaries.
-    This is a smart parser that looks for tables and assumes a 'Date', 'Description'/'ReferenceID', and 'Amount' structure.
+    Extracts transaction data from a PDF using PyMuPDF and Gemini AI.
+    Returns a list of dictionaries with 'source', 'transaction_date', 'amount', 'reference_id', and 'description'.
     """
-    transactions = []
     try:
-        doc = fitz.open(stream=file_stream, filetype="pdf")
-        for page in doc:
-            # Find all tables on the page
-            tables = page.find_tables()
-            if not tables:
-                logger.warning(f"No tables found on a page of {source_name}")
-                continue
-            
-            for table in tables:
-                # Extract data as a list of lists
-                data = table.extract()
-                if not data or len(data) < 2:  # Must have a header and at least one row
-                    continue
+        # Step 1: Extract raw text from PDF using PyMuPDF
+        text = ""
+        with fitz.open(stream=file_stream, filetype="pdf") as doc:
+            for page in doc:
+                text += page.get_text()
 
-                header = [str(h).lower() for h in data[0]]  # Get header, normalize to lower case
-                
-                # Try to find the required column indices
-                try:
-                    date_idx = header.index('date')
-                    amount_idx = header.index('amount')
-                    # Description can have multiple names
-                    desc_idx = -1
-                    if 'description' in header: 
-                        desc_idx = header.index('description')
-                    elif 'referenceid' in header: 
-                        desc_idx = header.index('referenceid')
-                    
-                except ValueError:
-                    logger.warning(f"Skipping table in {source_name} due to missing required columns (Date, Amount, Description/ReferenceID)")
-                    continue
+        if not text.strip():
+            logger.warning(f"No text extracted from {source_name} PDF")
+            return []
 
-                # Process each row in the table
-                for row in data[1:]:  # Skip header row
-                    try:
-                        transactions.append({
-                            'source': source_name,
-                            'transaction_date': datetime.strptime(row[date_idx], '%Y-%m-%d').date(),
-                            'amount': float(row[amount_idx]),
-                            'reference_id': row[desc_idx] if desc_idx != -1 else None,
-                            'description': row[desc_idx] if desc_idx != -1 else None,
-                        })
-                    except (ValueError, IndexError) as e:
-                        logger.warning(f"Skipping malformed row in {source_name} PDF: {row} - Error: {e}")
-                        continue
+        # Step 2: Use Gemini to extract transactions from raw text
+        model = genai.GenerativeModel('gemini-2.5-flash')
+        prompt = f"""
+        Act as an expert financial analyst. Your task is to extract financial transactions from the raw text of a {source_name.replace('_', ' ')}.
+        
+        **Instructions:**
+        - Identify all financial transactions in the provided text.
+        - Each transaction must have a `date` (YYYY-MM-DD), `amount` (number), and `description` (or reference ID if applicable).
+        - If a reference ID is present, include it as `reference_id`; otherwise, set it to null.
+        - Return the transactions as a JSON array of objects with keys: `source`, `transaction_date`, `amount`, `reference_id`, and `description`.
+        - Ensure dates are in YYYY-MM-DD format. If the date format in the text is different, convert it.
+        - If no transactions are found, return an empty array.
+        - Do not include any explanatory text, only the JSON output.
+
+        **Example Output:**
+        [
+            {{
+                "source": "{source_name}",
+                "transaction_date": "2025-09-10",
+                "amount": 15450.00,
+                "reference_id": "UPI/123456",
+                "description": "Payment Received"
+            }},
+            {{
+                "source": "{source_name}",
+                "transaction_date": "2025-09-13",
+                "amount": 500.00,
+                "reference_id": null,
+                "description": "Refund for overpayment"
+            }}
+        ]
+
+        **Text:**
+        {text[:8000]}
+        """
+        response = model.generate_content(prompt)
+        transactions = json.loads(response.text)
+
+        # Ensure transaction_date is a date object and validate data
+        for t in transactions:
+            try:
+                t['transaction_date'] = datetime.strptime(t['transaction_date'], '%Y-%m-%d').date()
+                t['amount'] = float(t['amount'])
+                t['source'] = source_name
+            except (ValueError, KeyError) as e:
+                logger.warning(f"Skipping invalid transaction in {source_name}: {t} - Error: {e}")
+                transactions.remove(t)
+
+        return transactions
+
     except Exception as e:
         logger.error(f"Failed to parse PDF for {source_name}: {e}")
-
-    return transactions
+        return []
 
 @reconciliation_bp.route('/run', methods=['POST'])
 def run_reconciliation():
@@ -78,7 +92,7 @@ def run_reconciliation():
     policy_file = request.files['policy_log']
 
     try:
-        # Parse PDF files instead of CSV
+        # Parse PDF files using the updated AI-powered function
         bank_trans = parse_pdf_statement(bank_file.stream, 'bank_statement')
         policy_trans = parse_pdf_statement(policy_file.stream, 'policy_log')
 
@@ -119,7 +133,7 @@ def run_reconciliation():
         # 3. AI Fuzzy Matching with Gemini
         if unmatched_bank and unmatched_policy:
             logger.info("Running AI fuzzy matching on remaining transactions...")
-            model = genai.GenerativeModel('gemini-2.5-flash')
+            model = genai.GenerativeModel('gemini-2.5-flash')  # Updated to a more recent model
             prompt = f"""
             Act as an expert financial analyst. Your task is to reconcile two lists of unmatched transactions: one from a bank statement and one from an internal policy log.
             
