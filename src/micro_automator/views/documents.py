@@ -11,6 +11,7 @@ import fitz  # PyMuPDF
 from ..extensions import db
 from ..models import Document, Client
 from ..services import redact_pii, log_audit_event, schedule_renewal_reminder
+from datetime import datetime  # Added for parsing expirationDate
 
 # --- Setup Logging ---
 logging.basicConfig(level=logging.INFO)
@@ -219,8 +220,14 @@ def process_document():
             client.photo_url = photo_url
             client.status = "Active"  # Mark as Active since we have their ID
 
-            # --- NEW: Set expiration_date for reminder scheduling ---
-            client.expiration_date = extraction_data.get("expirationDate")
+            # --- FIX: Parse expirationDate string to datetime.date ---
+            expiration_date_str = extraction_data.get("expirationDate")
+            if expiration_date_str:
+                try:
+                    client.expiration_date = datetime.strptime(expiration_date_str, '%Y-%m-%d').date()
+                except ValueError as e:
+                    logger.warning(f"Invalid expirationDate format: {expiration_date_str}. Error: {e}")
+                    client.expiration_date = None
             
             db.session.add(client)
             
