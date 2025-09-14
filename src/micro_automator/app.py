@@ -10,6 +10,7 @@ from .views.documents import documents_bp
 from .views.automation import automation_bp
 from .views.clients import clients_bp
 from .views.dashboard import dashboard_bp
+from .views.reconciliation import reconciliation_bp
 from . import models
 
 migrate = Migrate()
@@ -36,7 +37,7 @@ def create_app(config_class=Config):
     app.register_blueprint(automation_bp, url_prefix='/api/automation')
     app.register_blueprint(clients_bp, url_prefix='/api/clients')
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
-
+    app.register_blueprint(reconciliation_bp, url_prefix='/api/reconciliation')
     # Add a route to serve the uploaded/extracted photos
     @app.route('/uploads/<path:filename>')
     def serve_upload(filename):
