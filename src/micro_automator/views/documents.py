@@ -6,14 +6,12 @@ import google.generativeai as genai
 from flask import Blueprint, request, jsonify, current_app
 from werkzeug.utils import secure_filename
 from PIL import Image
-from datetime import datetime
 import pytesseract
 import fitz  # PyMuPDF
 
 from ..extensions import db
 from ..models.document import Document
 from ..models.client import Client
-from ..services import schedule_renewal_reminder
 
 # --- Setup Logging ---
 logging.basicConfig(level=logging.INFO)
@@ -122,8 +120,9 @@ def process_document():
         if not extracted_text.strip():
             return jsonify({"status": "error", "message": "Could not extract text."}), 400
 
-        # --- Stage 2: The Final, Definitive Gemini Prompt ---
-        model = genai.GenerativeModel('gemini-2.5-pro')  # Using the powerful model as you specified
+        # --- Stage 2: The Ultimate Gemini Prompt ---
+                # --- Stage 2: The Final, Definitive Gemini Prompt ---
+        model = genai.GenerativeModel('gemini-2.5-pro') # Using the powerful model as you specified
         prompt = f"""
         Act as an expert data extraction AI for an insurance agent. Your task is to analyze the text from a customer's insurance document (like a Welcome Kit, Policy Schedule, or Proposal Form) and convert it into a perfectly structured JSON object.
 
@@ -164,7 +163,7 @@ def process_document():
         
         response = model.generate_content(prompt)
         
-        # --- Handle JSON Parsing ---
+        # --- THIS IS THE DEFINITIVE FIX for the JSONDecodeError ---
         cleaned_text = response.text.strip()
         ai_data = None
         try:
@@ -204,39 +203,18 @@ def process_document():
             client = Client.query.filter_by(name=customer_name).first()
             if not client:
                 client = Client(name=customer_name)
-                logger.info(f"Created new client: {customer_name}")
             
             # Update client with all new details from the document
             client.dob = extraction_data.get("dob")
             client.gender = extraction_data.get("gender")
             client.address = extraction_data.get("address")
-            client.aadhaar_number = extraction_data.get("aadhaarNumber")
-            client.pan_number = extraction_data.get("panNumber")
+            client.aadhaar_number = extraction_data.get("aadhaar_number")
+            client.pan_number = extraction_data.get("pan_number")
             client.photo_url = photo_url
             client.status = "Active"  # Mark as Active since we have their ID
-
-            expiration_date_str = extraction_data.get("expirationDate")
-            if expiration_date_str:
-                try:
-                    client.expiration_date = datetime.strptime(expiration_date_str, '%Y-%m-%d').date()
-                except (ValueError, TypeError):
-                    client.expiration_date = None
-            
             db.session.add(client)
-            
-            # --- Definitive Fix: Commit client to ensure it has an ID ---
-            db.session.commit()
-            
-            # Now that the client is saved and has an ID, schedule the reminder
-            if client.expiration_date:
-                schedule_renewal_reminder(client)
-                # Commit again to save the reminder
-                db.session.commit()
 
-        else:
-            # If there's no customer name, commit the document only
-            db.session.commit()
-
+        db.session.commit()
         return jsonify({"status": "success", "data": new_document.to_dict()})
 
     except Exception as e:
