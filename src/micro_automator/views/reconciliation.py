@@ -19,9 +19,12 @@ def parse_pdf_statement(file_stream, source_name):
     Returns a list of dictionaries with 'source', 'transaction_date', 'amount', 'reference_id', and 'description'.
     """
     try:
-        # Step 1: Extract raw text from PDF using PyMuPDF
+        # Step 1: Read the file stream into bytes to ensure compatibility with PyMuPDF
+        file_bytes = file_stream.read()
+        
+        # Step 2: Extract raw text from PDF using PyMuPDF
         text = ""
-        with fitz.open(stream=file_stream, filetype="pdf") as doc:
+        with fitz.open(stream=file_bytes, filetype="pdf") as doc:
             for page in doc:
                 text += page.get_text()
 
@@ -29,7 +32,7 @@ def parse_pdf_statement(file_stream, source_name):
             logger.warning(f"No text extracted from {source_name} PDF")
             return []
 
-        # Step 2: Use Gemini to extract transactions from raw text
+        # Step 3: Use Gemini to extract transactions from raw text
         model = genai.GenerativeModel('gemini-2.5-flash')
         prompt = f"""
         Act as an expert financial analyst. Your task is to extract financial transactions from the raw text of a {source_name.replace('_', ' ')}.
