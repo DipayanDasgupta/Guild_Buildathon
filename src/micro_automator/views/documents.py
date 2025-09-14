@@ -8,10 +8,10 @@ from werkzeug.utils import secure_filename
 from PIL import Image
 import pytesseract
 import fitz  # PyMuPDF
+
 from ..extensions import db
-from ..models import Document, Client
-from ..services import redact_pii, log_audit_event, schedule_renewal_reminder
-from datetime import datetime  # Added for parsing expirationDate
+from ..models.document import Document
+from ..models.client import Client
 
 # --- Setup Logging ---
 logging.basicConfig(level=logging.INFO)
@@ -120,11 +120,9 @@ def process_document():
         if not extracted_text.strip():
             return jsonify({"status": "error", "message": "Could not extract text."}), 400
 
-        # --- NEW: Redact PII before sending to Gemini ---
-        redacted_text = redact_pii(extracted_text)
-
         # --- Stage 2: The Ultimate Gemini Prompt ---
-        model = genai.GenerativeModel('gemini-2.5-pro')  # Retain original model
+                # --- Stage 2: The Final, Definitive Gemini Prompt ---
+        model = genai.GenerativeModel('gemini-2.5-pro') # Using the powerful model as you specified
         prompt = f"""
         Act as an expert data extraction AI for an insurance agent. Your task is to analyze the text from a customer's insurance document (like a Welcome Kit, Policy Schedule, or Proposal Form) and convert it into a perfectly structured JSON object.
 
@@ -159,7 +157,7 @@ def process_document():
 
         **Document Text for Analysis:**
         ---
-        {redacted_text[:15000]}
+        {extracted_text[:15000]}
         ---
         """
         
@@ -200,16 +198,11 @@ def process_document():
         )
         db.session.add(new_document)
         
-        # --- NEW: Log document processing event ---
-        log_audit_event("document_processed", {"filename": file.filename})
-
         customer_name = extraction_data.get("name")
         if customer_name and customer_name.strip() != "":
             client = Client.query.filter_by(name=customer_name).first()
             if not client:
                 client = Client(name=customer_name)
-                # --- NEW: Log client creation event ---
-                log_audit_event("client_created_from_document", {"client_name": customer_name})
             
             # Update client with all new details from the document
             client.dob = extraction_data.get("dob")
@@ -219,21 +212,7 @@ def process_document():
             client.pan_number = extraction_data.get("pan_number")
             client.photo_url = photo_url
             client.status = "Active"  # Mark as Active since we have their ID
-
-            # --- FIX: Parse expirationDate string to datetime.date ---
-            expiration_date_str = extraction_data.get("expirationDate")
-            if expiration_date_str:
-                try:
-                    client.expiration_date = datetime.strptime(expiration_date_str, '%Y-%m-%d').date()
-                except ValueError as e:
-                    logger.warning(f"Invalid expirationDate format: {expiration_date_str}. Error: {e}")
-                    client.expiration_date = None
-            
             db.session.add(client)
-            
-            # --- NEW: Schedule renewal reminder ---
-            if client.expiration_date:
-                schedule_renewal_reminder(client)
 
         db.session.commit()
         return jsonify({"status": "success", "data": new_document.to_dict()})
