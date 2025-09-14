@@ -121,29 +121,41 @@ def process_document():
             return jsonify({"status": "error", "message": "Could not extract text."}), 400
 
         # --- Stage 2: The Ultimate Gemini Prompt ---
-        model = genai.GenerativeModel('gemini-2.5-pro')
+                # --- Stage 2: The Final, Definitive Gemini Prompt ---
+        model = genai.GenerativeModel('gemini-2.5-pro') # Using the powerful model as you specified
         prompt = f"""
-        Act as an AI assistant for an insurance agent, specializing in KYC (Know Your Customer) data extraction from Indian identity documents.
-        
-        TASKS:
-        1.  **Detailed Extraction:** From the text below, extract every possible piece of identity information. The text is from an OCR scan and may contain errors.
-            -   `name`: The full name of the person.
-            -   `dob`: The Date of Birth in YYYY-MM-DD format.
-            -   `gender`: The gender (Male, Female, or Other).
-            -   `aadhaar_number`: The 12-digit Aadhaar number. Format it as XXXX XXXX XXXX.
-            -   `pan_number`: The 10-character PAN number.
-            -   `address`: The full, complete address as a single string.
-        
-        2.  **Analysis:** Provide a concise analysis of the document.
-            -   `summary`: A single sentence identifying the document type and owner (e.g., "This is the Aadhaar card for Sameer Kumar.").
-            -   `category`: Classify the document as "Aadhaar Card", "PAN Card", "Policy Document", or "Other".
+        Act as an expert data extraction AI for an insurance agent. Your task is to analyze the text from a customer's insurance document (like a Welcome Kit, Policy Schedule, or Proposal Form) and convert it into a perfectly structured JSON object.
 
-        OUTPUT FORMATTING:
-        -   Return the result ONLY as a single, valid JSON object.
-        -   Do not include any explanatory text, greetings, or markdown formatting.
-        -   For any field in the 'extraction' block that is NOT PRESENT in the text, you MUST use the JSON value `null`.
+        **Instructions:**
+        1.  **Analyze the Text:** Carefully read the entire provided document text. The text is from a PDF and may contain formatting artifacts.
+        2.  **Comprehensive Extraction:** Identify and extract the values for all fields listed in the JSON schema below. Pay close attention to labels like "Policy ID / Number", "Date of Birth (DOB)", etc.
+        3.  **Strict JSON Output:** Your entire response MUST be a single, valid JSON object and nothing else. Do not include any explanatory text, greetings, or markdown formatting like ```json.
+        4.  **Handle Missing Data:** If a value for any field is not found in the document, you MUST use the JSON value `null`. Do not make up or infer data.
+        5.  **Data Formatting:**
+            -   Dates must be in `YYYY-MM-DD` format.
+            -   `premiumAmount` must be a number (float or integer), without any currency symbols or commas.
+            -   `aadhaarNumber` and `panNumber` should be extracted as strings.
 
-        DOCUMENT TEXT TO ANALYZE:
+        **JSON Schema to Follow:**
+        {{
+          "extraction": {{
+            "name": "Full Name of the primary person",
+            "dob": "Date of Birth in YYYY-MM-DD format",
+            "aadhaarNumber": "The 12-digit Aadhaar number",
+            "panNumber": "The 10-character PAN number",
+            "policyId": "The Policy Number or Proposal Number (e.g., TRTL-LIFE-6969)",
+            "policyType": "The name or type of the insurance policy (e.g., SecureLife Term Plan)",
+            "premiumAmount": 22222.00,
+            "premiumFrequency": "The frequency of payment (e.g., 'Yearly', 'Monthly')",
+            "expirationDate": "The policy expiry or end date in YYYY-MM-DD format"
+          }},
+          "analysis": {{
+            "summary": "A single, informative sentence describing the document.",
+            "category": "Classify as: 'New Policy Document', 'Policy Renewal', 'KYC Document', or 'Other'."
+          }}
+        }}
+
+        **Document Text for Analysis:**
         ---
         {extracted_text[:15000]}
         ---
