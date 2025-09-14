@@ -3,8 +3,6 @@ services:
     name: guild-buildathon-backend
     env: python
     plan: free
-    # This build command ensures all packages are installed and the database is migrated
-    # before the server starts.
     buildCommand: "poetry install --no-root && poetry run flask db upgrade"
     startCommand: "poetry run gunicorn --timeout 120 \"src.micro_automator.app:app\""
     healthCheckPath: /

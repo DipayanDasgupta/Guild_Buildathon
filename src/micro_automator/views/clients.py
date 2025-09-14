@@ -1,7 +1,8 @@
 from flask import Blueprint, jsonify, request
 from ..extensions import db
-from ..models.client import Client
+from ..models.client import Client, FollowUp
 from sqlalchemy import or_
+from datetime import datetime
 
 clients_bp = Blueprint('clients', __name__)
 
@@ -13,7 +14,7 @@ def get_clients():
         status_filter = request.args.get('status')
         search_term = request.args.get('search')
 
-        if status_filter and status_filter != 'All':
+        if status_filter and status_filter in ['Active', 'Engaged', 'Prospective']:
             query = query.filter(Client.status == status_filter)
         
         if search_term:
@@ -53,3 +54,22 @@ def delete_client(client_id):
     db.session.delete(client)
     db.session.commit()
     return jsonify({'message': 'Client deleted successfully'})
+
+@clients_bp.route('/<int:client_id>/follow-ups', methods=['POST'])
+def schedule_follow_up(client_id):
+    """Schedules a follow-up for a client."""
+    client = Client.query.get_or_404(client_id)
+    data = request.get_json()
+    if not data or not data.get('dueDate') or not data.get('type'):
+        return jsonify({"message": "Due date and type are required"}), 400
+    
+    new_follow_up = FollowUp(
+        client_id=client.id,
+        due_date=datetime.fromisoformat(data['dueDate']),
+        type=data['type'],
+        notes=data.get('notes')
+    )
+    db.session.add(new_follow_up)
+    client.status = 'Engaged'  # Automatically update client status
+    db.session.commit()
+    return jsonify({'message': 'Follow-up scheduled successfully'}), 201

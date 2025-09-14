@@ -6,44 +6,35 @@ class Client(db.Model):
     name = db.Column(db.String(150), nullable=False, unique=True)
     email = db.Column(db.String(150), nullable=True)
     phone = db.Column(db.String(50), nullable=True)
-    address = db.Column(db.Text, nullable=True)
-    status = db.Column(db.String(50), default='Prospective')
+    status = db.Column(db.String(50), default='Prospective') # Prospective, Engaged, Active
     
-    # Policy Specific Details
     policy_type = db.Column(db.String(100), nullable=True)
     policy_id = db.Column(db.String(100), nullable=True)
     premium_amount = db.Column(db.Float, nullable=True)
-    premium_frequency = db.Column(db.String(50), nullable=True)
     expiration_date = db.Column(db.Date, nullable=True)
-    due_date = db.Column(db.Date, nullable=True)
-    
-    # KYC Details
-    dob = db.Column(db.Date, nullable=True)
-    gender = db.Column(db.String(50), nullable=True)
-    aadhaar_number = db.Column(db.String(20), nullable=True, unique=True)
-    pan_number = db.Column(db.String(20), nullable=True, unique=True)
-    photo_url = db.Column(db.String(512), nullable=True)
     
     last_contact = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    
+    follow_ups = db.relationship('FollowUp', backref='client', lazy=True, cascade="all, delete-orphan")
 
     def to_dict(self):
         return {
-            'id': self.id,
-            'name': self.name,
-            'email': self.email,
-            'phone': self.phone,
-            'address': self.address,
-            'status': self.status,
-            'policyType': self.policy_type,
-            'policyId': self.policy_id,
+            'id': self.id, 'name': self.name, 'email': self.email, 'phone': self.phone,
+            'status': self.status, 'policyType': self.policy_type, 'policyId': self.policy_id,
             'premiumAmount': self.premium_amount,
-            'premiumFrequency': self.premium_frequency,
             'expirationDate': self.expiration_date.isoformat() if self.expiration_date else None,
-            'dueDate': self.due_date.isoformat() if self.due_date else None,
-            'dob': self.dob.isoformat() if self.dob else None,
-            'gender': self.gender,
-            'aadhaarNumber': self.aadhaar_number,
-            'panNumber': self.pan_number,
-            'photoUrl': self.photo_url,
             'lastContact': self.last_contact.isoformat(),
+            'nextFollowUp': self.get_next_follow_up_date()
         }
+
+    def get_next_follow_up_date(self):
+        next_follow_up = FollowUp.query.filter_by(client_id=self.id, completed=False).order_by(FollowUp.due_date.asc()).first()
+        return next_follow_up.due_date.isoformat() if next_follow_up else None
+
+class FollowUp(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    client_id = db.Column(db.Integer, db.ForeignKey('client.id'), nullable=False)
+    due_date = db.Column(db.DateTime, nullable=False)
+    type = db.Column(db.String(50), nullable=False) # 'Call' or 'Text'
+    notes = db.Column(db.Text, nullable=True)
+    completed = db.Column(db.Boolean, default=False)
