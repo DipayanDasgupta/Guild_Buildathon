@@ -1,4 +1,7 @@
-import os, json, io, logging
+import os
+import json
+import io
+import logging
 from datetime import datetime
 import google.generativeai as genai
 from flask import Blueprint, request, jsonify
@@ -15,76 +18,84 @@ reconciliation_bp = Blueprint('reconciliation', __name__)
 
 def parse_pdf_statement(file_stream, source_name):
     """
-    Extracts transaction data from a PDF using PyMuPDF and Gemini AI.
-    Returns a list of dictionaries with 'source', 'transaction_date', 'amount', 'reference_id', and 'description'.
+    Extracts transaction data from a PDF using PyMuPDF for text extraction and Gemini AI for data structuring.
+    This is a more robust method that does not rely on perfect table structures in the PDF.
     """
     try:
-        # Step 1: Read the file stream into bytes to ensure compatibility with PyMuPDF
+        # Read the entire file stream into bytes to make it reusable
         file_bytes = file_stream.read()
         
-        # Step 2: Extract raw text from PDF using PyMuPDF
-        text = ""
+        # Step 1: Extract all raw text from the PDF using PyMuPDF
+        raw_text = ""
         with fitz.open(stream=file_bytes, filetype="pdf") as doc:
             for page in doc:
-                text += page.get_text()
+                raw_text += page.get_text()
 
-        if not text.strip():
-            logger.warning(f"No text extracted from {source_name} PDF")
+        if not raw_text.strip():
+            logger.warning(f"No text could be extracted from the {source_name} PDF.")
             return []
 
-        # Step 3: Use Gemini to extract transactions from raw text
+        # Step 2: Send the raw text to Gemini AI for intelligent data extraction
         model = genai.GenerativeModel('gemini-2.5-flash')
         prompt = f"""
-        Act as an expert financial analyst. Your task is to extract financial transactions from the raw text of a {source_name.replace('_', ' ')}.
-        
-        **Instructions:**
-        - Identify all financial transactions in the provided text.
-        - Each transaction must have a `date` (YYYY-MM-DD), `amount` (number), and `description` (or reference ID if applicable).
-        - If a reference ID is present, include it as `reference_id`; otherwise, set it to null.
-        - Return the transactions as a JSON array of objects with keys: `source`, `transaction_date`, `amount`, `reference_id`, and `description`.
-        - Ensure dates are in YYYY-MM-DD format. If the date format in the text is different, convert it.
-        - If no transactions are found, return an empty array.
-        - Do not include any explanatory text, only the JSON output.
+        Act as an expert data entry clerk specializing in financial documents.
+        Analyze the following raw text extracted from a '{source_name}' and identify all financial transaction entries.
 
-        **Example Output:**
+        For each transaction, extract the following fields:
+        1.  `transaction_date`: The date of the transaction. You MUST format it as YYYY-MM-DD.
+        2.  `amount`: The numerical value of the transaction.
+        3.  `reference_id`: Any unique identifier, policy number, or reference code. If none is found, use null.
+        4.  `description`: A brief description of the transaction.
+
+        Return your findings ONLY as a single, valid JSON array of objects. Each object represents one transaction.
+        If no transactions are found in the text, return an empty array `[]`. Do not add any commentary or explanations.
+
+        EXAMPLE RESPONSE:
         [
-            {{
-                "source": "{source_name}",
-                "transaction_date": "2025-09-10",
-                "amount": 15450.00,
-                "reference_id": "UPI/123456",
-                "description": "Payment Received"
-            }},
-            {{
-                "source": "{source_name}",
-                "transaction_date": "2025-09-13",
-                "amount": 500.00,
-                "reference_id": null,
-                "description": "Refund for overpayment"
-            }}
+          {{
+            "transaction_date": "2024-08-15",
+            "amount": 5250.00,
+            "reference_id": "POL-987654",
+            "description": "Premium Payment - A. Kumar"
+          }}
         ]
 
-        **Text:**
-        {text[:8000]}
+        Here is the raw text to analyze:
+        ---
+        {raw_text[:15000]}
+        ---
         """
+        
         response = model.generate_content(prompt)
-        transactions = json.loads(response.text)
+        # Clean up potential markdown formatting from the AI response
+        cleaned_response_text = response.text.strip().replace('```json', '').replace('```', '').strip()
+        
+        extracted_transactions = json.loads(cleaned_response_text)
+        logger.info(f"Successfully extracted {len(extracted_transactions)} transactions from {source_name} using AI.")
 
-        # Ensure transaction_date is a date object and validate data
-        for t in transactions:
+        # Step 3: Validate and format the data
+        validated_transactions = []
+        for t in extracted_transactions:
             try:
-                t['transaction_date'] = datetime.strptime(t['transaction_date'], '%Y-%m-%d').date()
-                t['amount'] = float(t['amount'])
-                t['source'] = source_name
-            except (ValueError, KeyError) as e:
-                logger.warning(f"Skipping invalid transaction in {source_name}: {t} - Error: {e}")
-                transactions.remove(t)
-
-        return transactions
+                validated_transactions.append({
+                    'source': source_name,
+                    'transaction_date': datetime.strptime(t['transaction_date'], '%Y-%m-%d').date(),
+                    'amount': float(t['amount']),
+                    'reference_id': t.get('reference_id'),
+                    'description': t.get('description')
+                })
+            except (ValueError, KeyError, TypeError) as e:
+                logger.warning(f"Skipping malformed transaction object from AI for {source_name}: {t} - Error: {e}")
+                continue
+        
+        return validated_transactions
 
     except Exception as e:
-        logger.error(f"Failed to parse PDF for {source_name}: {e}")
+        logger.error(f"A critical error occurred in parse_pdf_statement for {source_name}: {e}", exc_info=True)
         return []
+
+# The rest of your routes (@reconciliation_bp.route('/run'), etc.) remain unchanged as their logic
+# is sound and they correctly consume the output of the parser.
 
 @reconciliation_bp.route('/run', methods=['POST'])
 def run_reconciliation():
@@ -105,18 +116,23 @@ def run_reconciliation():
         # 1. Create a new batch and save all transactions
         batch = ReconciliationBatch()
         db.session.add(batch)
-        db.session.flush()  # Get the batch ID
+        db.session.flush()
 
-        all_transactions = [Transaction(batch_id=batch.id, **t) for t in bank_trans + policy_trans]
-        db.session.bulk_save_objects(all_transactions)
+        all_db_transactions = []
+        for t in bank_trans + policy_trans:
+            all_db_transactions.append(Transaction(batch_id=batch.id, **t))
+        
+        db.session.bulk_save_objects(all_db_transactions)
         db.session.commit()
+        
+        # We need to re-fetch the transactions to get their generated IDs
+        all_transactions_with_ids = Transaction.query.filter_by(batch_id=batch.id).all()
 
         # 2. Rules Engine: Deterministic Matching
         logger.info("Running deterministic matching rules...")
-        unmatched_bank = {t.id: t for t in all_transactions if t.source == 'bank_statement'}
-        unmatched_policy = {t.id: t for t in all_transactions if t.source == 'policy_log'}
+        unmatched_bank = {t.id: t for t in all_transactions_with_ids if t.source == 'bank_statement'}
+        unmatched_policy = {t.id: t for t in all_transactions_with_ids if t.source == 'policy_log'}
         
-        # Simple match on ReferenceID and Amount
         matched_ids = set()
         for bank_id, bank_t in list(unmatched_bank.items()):
             for policy_id, policy_t in list(unmatched_policy.items()):
@@ -136,7 +152,7 @@ def run_reconciliation():
         # 3. AI Fuzzy Matching with Gemini
         if unmatched_bank and unmatched_policy:
             logger.info("Running AI fuzzy matching on remaining transactions...")
-            model = genai.GenerativeModel('gemini-2.5-flash')  # Updated to a more recent model
+            model = genai.GenerativeModel('gemini-2.5-flash')
             prompt = f"""
             Act as an expert financial analyst. Your task is to reconcile two lists of unmatched transactions: one from a bank statement and one from an internal policy log.
             
@@ -159,7 +175,8 @@ def run_reconciliation():
             }}
             """
             response = model.generate_content(prompt)
-            ai_results = json.loads(response.text)
+            cleaned_response_text = response.text.strip().replace('```json', '').replace('```', '').strip()
+            ai_results = json.loads(cleaned_response_text)
             
             for pair in ai_results.get("matched_pairs", []):
                 bank_t = db.session.get(Transaction, pair['bank_transaction_id'])
@@ -182,7 +199,10 @@ def run_reconciliation():
 @reconciliation_bp.route('/batches/<int:batch_id>', methods=['GET'])
 def get_batch_details(batch_id):
     """Returns all transactions for a specific batch, separating exceptions."""
-    batch = ReconciliationBatch.query.get_or_404(batch_id)
+    batch = db.session.get(ReconciliationBatch, batch_id)
+    if not batch:
+        return jsonify({"message": "Batch not found."}), 404
+        
     transactions = batch.transactions
     
     unmatched_bank = [t.to_dict() for t in transactions if t.source == 'bank_statement' and t.status == 'unmatched']
