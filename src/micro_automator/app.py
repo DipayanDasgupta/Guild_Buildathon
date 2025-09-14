@@ -12,6 +12,7 @@ from .views.clients import clients_bp
 from .views.dashboard import dashboard_bp
 from .views.reconciliation import reconciliation_bp
 from .views.chatbot import chatbot_bp
+from .views.audits import audits_bp
 
 from . import models
 
@@ -41,6 +42,7 @@ def create_app(config_class=Config):
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
     app.register_blueprint(reconciliation_bp, url_prefix='/api/reconciliation')
     app.register_blueprint(chatbot_bp, url_prefix='/api/chatbot')
+    app.register_blueprint(audits_bp, url_prefix='/api/audits')
     # Add a route to serve the uploaded/extracted photos
     @app.route('/uploads/<path:filename>')
     def serve_upload(filename):
