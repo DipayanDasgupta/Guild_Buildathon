@@ -12,6 +12,7 @@ import fitz  # PyMuPDF
 from ..extensions import db
 from ..models.document import Document
 from ..models.client import Client
+from ..models.form import Form  # Added missing Form model import
 
 # --- Setup Logging ---
 logging.basicConfig(level=logging.INFO)
@@ -52,8 +53,6 @@ def extract_and_save_image_from_pdf(pdf_stream, original_filename):
             filepath = os.path.join(current_app.config['UPLOAD_FOLDER'], filename)
             with open(filepath, "wb") as f:
                 f.write(best_image)
-            
-            # This assumes your app is hosted at the root. Adjust if needed.
             photo_url = f"{request.host_url}uploads/{filename}"
             logger.info(f"Extracted and saved photo to {photo_url}")
             return photo_url
@@ -62,6 +61,7 @@ def extract_and_save_image_from_pdf(pdf_stream, original_filename):
     return None
 
 def extract_text_from_pdf(pdf_stream):
+    """Extracts text from a PDF stream."""
     text = ""
     with fitz.open(stream=pdf_stream, filetype="pdf") as doc:
         for page in doc:
@@ -70,6 +70,7 @@ def extract_text_from_pdf(pdf_stream):
     return text
 
 def extract_text_from_image(image_stream):
+    """Extracts text from an image stream using OCR."""
     image = Image.open(image_stream)
     text = pytesseract.image_to_string(image)
     logger.info(f"Extracted {len(text)} characters from Image using OCR.")
@@ -78,11 +79,13 @@ def extract_text_from_image(image_stream):
 # --- API Endpoints ---
 @documents_bp.route('/', methods=['GET'])
 def get_all_documents():
+    """Retrieve all documents from the database."""
     documents = Document.query.order_by(Document.upload_date.desc()).all()
     return jsonify([doc.to_dict() for doc in documents])
 
 @documents_bp.route('/<int:doc_id>', methods=['DELETE'])
 def delete_document(doc_id):
+    """Delete a document by ID."""
     document = Document.query.get_or_404(doc_id)
     db.session.delete(document)
     db.session.commit()
@@ -90,13 +93,14 @@ def delete_document(doc_id):
 
 @documents_bp.route('/process', methods=['POST'])
 def process_document():
+    """Process an uploaded document, extract data, and store in database."""
     if 'document' not in request.files:
         return jsonify({"status": "error", "message": "No document file part"}), 400
     file = request.files['document']
     
+    # --- KEY FIX: Read file content into memory ONCE ---
     file.seek(0)
     file_bytes = file.read()
-    file_stream = io.BytesIO(file_bytes)
     
     try:
         # --- Stage 1: Parallel Extraction ---
@@ -108,7 +112,6 @@ def process_document():
             photo_url = extract_and_save_image_from_pdf(io.BytesIO(file_bytes), file.filename)
         elif file.content_type.startswith('image/'):
             extracted_text = extract_text_from_image(io.BytesIO(file_bytes))
-            # If the upload is an image, we can treat the whole thing as the photo
             filename = f"photo_{secure_filename(file.filename)}.png"
             filepath = os.path.join(current_app.config['UPLOAD_FOLDER'], filename)
             with open(filepath, "wb") as f:
@@ -154,11 +157,9 @@ def process_document():
         cleaned_text = response.text.strip()
         ai_data = None
         try:
-            # First, try to load the text directly.
             ai_data = json.loads(cleaned_text)
         except json.JSONDecodeError:
             logger.warning("Initial JSON parsing failed. Searching for a markdown JSON block.")
-            # If it fails, it's likely wrapped in ```json ... ```. We'll find it.
             start_index = cleaned_text.find('{')
             end_index = cleaned_text.rfind('}') + 1
             if start_index != -1 and end_index != -1:
@@ -207,7 +208,7 @@ def process_document():
                 filename=file.filename,
                 extracted_data=extraction_data,
                 ai_summary=f"This is the {analysis_data.get('identified_document_type', 'Unknown Document')} for {customer_name}.",
-                ai_category=analysis_data.get("identified_document_type", "Unknown Document"),
+                ai_category=analysis_data.get("identified_document_type", "Unknown Document")
             )
             db.session.add(new_document)
             
@@ -216,7 +217,7 @@ def process_document():
             # Return both the extracted data and the missing documents list
             return jsonify({ 
                 "status": "success", 
-                "extracted_data": extraction_data,
+                "data": extraction_data,  # Changed to match your requested response structure
                 "missing_documents": analysis_data.get("missing_documents", [])
             })
         else:
