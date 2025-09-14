@@ -1,7 +1,9 @@
-import os, json, io, logging, csv
+import os, json, io, logging
 from datetime import datetime
 import google.generativeai as genai
 from flask import Blueprint, request, jsonify
+import fitz  # PyMuPDF for PDF parsing
+
 from ..extensions import db
 from ..models.reconciliation import ReconciliationBatch, Transaction
 
@@ -11,23 +13,60 @@ genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
 reconciliation_bp = Blueprint('reconciliation', __name__)
 
-def parse_csv(file_stream, source_name):
-    # Decodes and reads a CSV file, returning a list of dictionaries
-    stream = io.StringIO(file_stream.read().decode("UTF-8"))
-    reader = csv.DictReader(stream)
+def parse_pdf_statement(file_stream, source_name):
+    """
+    Extracts tabular data from a PDF and converts it into a list of dictionaries.
+    This is a smart parser that looks for tables and assumes a 'Date', 'Description'/'ReferenceID', and 'Amount' structure.
+    """
     transactions = []
-    for row in reader:
-        try:
-            transactions.append({
-                'source': source_name,
-                'transaction_date': datetime.strptime(row['Date'], '%Y-%m-%d').date(),
-                'amount': float(row['Amount']),
-                'reference_id': row.get('ReferenceID'),
-                'description': row.get('Description')
-            })
-        except (ValueError, KeyError) as e:
-            logger.warning(f"Skipping malformed row in {source_name}: {row} - Error: {e}")
-            continue
+    try:
+        doc = fitz.open(stream=file_stream, filetype="pdf")
+        for page in doc:
+            # Find all tables on the page
+            tables = page.find_tables()
+            if not tables:
+                logger.warning(f"No tables found on a page of {source_name}")
+                continue
+            
+            for table in tables:
+                # Extract data as a list of lists
+                data = table.extract()
+                if not data or len(data) < 2:  # Must have a header and at least one row
+                    continue
+
+                header = [str(h).lower() for h in data[0]]  # Get header, normalize to lower case
+                
+                # Try to find the required column indices
+                try:
+                    date_idx = header.index('date')
+                    amount_idx = header.index('amount')
+                    # Description can have multiple names
+                    desc_idx = -1
+                    if 'description' in header: 
+                        desc_idx = header.index('description')
+                    elif 'referenceid' in header: 
+                        desc_idx = header.index('referenceid')
+                    
+                except ValueError:
+                    logger.warning(f"Skipping table in {source_name} due to missing required columns (Date, Amount, Description/ReferenceID)")
+                    continue
+
+                # Process each row in the table
+                for row in data[1:]:  # Skip header row
+                    try:
+                        transactions.append({
+                            'source': source_name,
+                            'transaction_date': datetime.strptime(row[date_idx], '%Y-%m-%d').date(),
+                            'amount': float(row[amount_idx]),
+                            'reference_id': row[desc_idx] if desc_idx != -1 else None,
+                            'description': row[desc_idx] if desc_idx != -1 else None,
+                        })
+                    except (ValueError, IndexError) as e:
+                        logger.warning(f"Skipping malformed row in {source_name} PDF: {row} - Error: {e}")
+                        continue
+    except Exception as e:
+        logger.error(f"Failed to parse PDF for {source_name}: {e}")
+
     return transactions
 
 @reconciliation_bp.route('/run', methods=['POST'])
@@ -39,13 +78,17 @@ def run_reconciliation():
     policy_file = request.files['policy_log']
 
     try:
-        bank_trans = parse_csv(bank_file.stream, 'bank_statement')
-        policy_trans = parse_csv(policy_file.stream, 'policy_log')
+        # Parse PDF files instead of CSV
+        bank_trans = parse_pdf_statement(bank_file.stream, 'bank_statement')
+        policy_trans = parse_pdf_statement(policy_file.stream, 'policy_log')
+
+        if not bank_trans or not policy_trans:
+            return jsonify({"message": "Could not extract any valid transaction data from one or both PDFs."}), 400
 
         # 1. Create a new batch and save all transactions
         batch = ReconciliationBatch()
         db.session.add(batch)
-        db.session.flush() # Get the batch ID
+        db.session.flush()  # Get the batch ID
 
         all_transactions = [Transaction(batch_id=batch.id, **t) for t in bank_trans + policy_trans]
         db.session.bulk_save_objects(all_transactions)
