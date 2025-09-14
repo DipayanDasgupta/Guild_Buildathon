@@ -121,7 +121,7 @@ def process_document():
             return jsonify({"status": "error", "message": "Could not extract text."}), 400
 
         # --- Stage 2: The Ultimate Gemini Prompt ---
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-pro')
         prompt = f"""
         Act as an AI assistant for an insurance agent, specializing in KYC (Know Your Customer) data extraction from Indian identity documents.
         
