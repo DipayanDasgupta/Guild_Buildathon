@@ -6,6 +6,7 @@ import google.generativeai as genai
 from flask import Blueprint, request, jsonify, current_app
 from werkzeug.utils import secure_filename
 from PIL import Image
+from datetime import datetime
 import pytesseract
 import fitz  # PyMuPDF
 
