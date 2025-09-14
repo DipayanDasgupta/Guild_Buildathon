@@ -120,30 +120,29 @@ def process_document():
         if not extracted_text.strip():
             return jsonify({"status": "error", "message": "Could not extract text."}), 400
 
-        # --- Stage 2: The Ultimate Gemini Prompt ---
+        # --- Stage 2: The Smart Form Filler Prompt ---
         model = genai.GenerativeModel('gemini-2.5-flash')
         prompt = f"""
-        Act as an AI assistant for an insurance agent, specializing in KYC (Know Your Customer) data extraction from Indian identity documents.
-        
-        TASKS:
-        1.  **Detailed Extraction:** From the text below, extract every possible piece of identity information. The text is from an OCR scan and may contain errors.
-            -   `name`: The full name of the person.
-            -   `dob`: The Date of Birth in YYYY-MM-DD format.
-            -   `gender`: The gender (Male, Female, or Other).
-            -   `aadhaar_number`: The 12-digit Aadhaar number. Format it as XXXX XXXX XXXX.
-            -   `pan_number`: The 10-character PAN number.
-            -   `address`: The full, complete address as a single string.
-        
-        2.  **Analysis:** Provide a concise analysis of the document.
-            -   `summary`: A single sentence identifying the document type and owner (e.g., "This is the Aadhaar card for Sameer Kumar.").
-            -   `category`: Classify the document as "Aadhaar Card", "PAN Card", "Policy Document", or "Other".
+        Act as a Smart AI Form Filler for an insurance agent. Your primary goal is to ingest the text from a user-uploaded document, identify the document type, extract all relevant data, and determine what documents are still missing for a complete insurance application.
 
-        OUTPUT FORMATTING:
-        -   Return the result ONLY as a single, valid JSON object.
-        -   Do not include any explanatory text, greetings, or markdown formatting.
-        -   For any field in the 'extraction' block that is NOT PRESENT in the text, you MUST use the JSON value `null`.
+        **Instructions:**
+        1.  **Analyze and Identify:** Read the text and identify the document type. Is it an Aadhaar Card, a PAN Card, a Proposal Form, a Bank Statement, etc.?
+        2.  **Detailed Extraction:** Extract all personal and policy information into a structured `extraction` object.
+        3.  **Missing Document Detection:** Based on the document type you identified, determine what other documents are typically required for a full application (e.g., if it's a Proposal Form, Aadhaar and PAN are likely needed). List these in a `missing_documents` array. If all documents seem to be present, return an empty array.
+        4.  **Strict JSON Output:** Your entire response MUST be a single, valid JSON object and nothing else.
 
-        DOCUMENT TEXT TO ANALYZE:
+        **JSON Schema to Follow:**
+        {{
+          "extraction": {{
+            "name": "...", "dob": "...", "panNumber": "...", "aadhaarNumber": "...", "email": "...", "phone": "...", "address": "...", "policyType": "..."
+          }},
+          "analysis": {{
+            "identified_document_type": "e.g., Aadhaar Card",
+            "missing_documents": ["e.g., PAN Card", "e.g., Proposal Form"]
+          }}
+        }}
+
+        **Document Text for Analysis:**
         ---
         {extracted_text[:15000]}
         ---
@@ -151,7 +150,7 @@ def process_document():
         
         response = model.generate_content(prompt)
         
-        # --- THIS IS THE DEFINITIVE FIX for the JSONDecodeError ---
+        # --- JSON Parsing and Error Handling ---
         cleaned_text = response.text.strip()
         ai_data = None
         try:
@@ -177,33 +176,51 @@ def process_document():
         # --- Stage 3: Save to Database ---
         extraction_data = ai_data.get("extraction", {})
         analysis_data = ai_data.get("analysis", {})
-
-        new_document = Document(
-            filename=file.filename,
-            extracted_data=extraction_data,
-            ai_summary=analysis_data.get("summary"),
-            ai_category=analysis_data.get("category"),
-        )
-        db.session.add(new_document)
         
         customer_name = extraction_data.get("name")
         if customer_name and customer_name.strip() != "":
+            # Find or create the client
             client = Client.query.filter_by(name=customer_name).first()
             if not client:
-                client = Client(name=customer_name)
+                client = Client(name=customer_name, status='Engaged')
             
-            # Update client with all new details from the document
+            # Update client with any new info from the document
             client.dob = extraction_data.get("dob")
-            client.gender = extraction_data.get("gender")
+            client.pan_number = extraction_data.get("panNumber")
+            client.aadhaar_number = extraction_data.get("aadhaarNumber")
+            client.email = extraction_data.get("email")
+            client.phone = extraction_data.get("phone")
             client.address = extraction_data.get("address")
-            client.aadhaar_number = extraction_data.get("aadhaar_number")
-            client.pan_number = extraction_data.get("pan_number")
+            client.policy_type = extraction_data.get("policyType")
             client.photo_url = photo_url
-            client.status = "Active"  # Mark as Active since we have their ID
             db.session.add(client)
+            
+            # Create a new Form record for the uploaded document
+            new_form = Form(
+                client_id=client.id,
+                form_type=analysis_data.get("identified_document_type", "Unknown Document")
+            )
+            db.session.add(new_form)
 
-        db.session.commit()
-        return jsonify({"status": "success", "data": new_document.to_dict()})
+            # Save document to Document table
+            new_document = Document(
+                filename=file.filename,
+                extracted_data=extraction_data,
+                ai_summary=f"This is the {analysis_data.get('identified_document_type', 'Unknown Document')} for {customer_name}.",
+                ai_category=analysis_data.get("identified_document_type", "Unknown Document"),
+            )
+            db.session.add(new_document)
+            
+            db.session.commit()
+            
+            # Return both the extracted data and the missing documents list
+            return jsonify({ 
+                "status": "success", 
+                "extracted_data": extraction_data,
+                "missing_documents": analysis_data.get("missing_documents", [])
+            })
+        else:
+            return jsonify({"status": "error", "message": "Could not identify a customer name in the document."}), 400
 
     except Exception as e:
         db.session.rollback()
